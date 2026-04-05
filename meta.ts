@@ -75,11 +75,25 @@ export async function execAtMetaLevel(
     { system: SYSTEM_PROMPT, tier: "fast", maxTokens: 1024 },
   );
 
+  // Extract the last JSON object from the response
+  // (the LLM sometimes includes preamble or multiple attempts)
   let mod: MetaModification;
-  try {
-    mod = JSON.parse(text);
-  } catch {
-    throw new Error(`Meta-level returned invalid JSON:\n${text}`);
+  const jsonMatches = [...text.matchAll(/\{[\s\S]*?"fnName"[\s\S]*?"code"[\s\S]*?"description"[\s\S]*?\}\s*$/gm)];
+  if (jsonMatches.length === 0) {
+    // Try parsing the whole thing
+    try {
+      mod = JSON.parse(text);
+    } catch {
+      throw new Error(`Meta-level returned invalid JSON:\n${text}`);
+    }
+  } else {
+    // Take the last match
+    const jsonStr = jsonMatches[jsonMatches.length - 1][0];
+    try {
+      mod = JSON.parse(jsonStr);
+    } catch {
+      throw new Error(`Meta-level returned unparseable JSON:\n${jsonStr}`);
+    }
   }
 
   applyModification(interp, mod);

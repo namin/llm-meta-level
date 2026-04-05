@@ -123,6 +123,49 @@ understanding produces an exact artifact (code) that the interpreter
 runs deterministically. The approximation is in the *generation*; the
 execution is precise.
 
+## Tests
+
+```bash
+node --loader ts-node/esm test.ts
+```
+
+The tests run tutorial examples as assertions. Part 1 tests the exact
+interpreter (no LLM needed). Parts 2-4 test LLM meta-level
+modifications and undo.
+
+```
+Part 1: Exact interpreter
+  ok  addition
+  ok  multiplication
+  ok  square
+  ok  factorial
+  ok  if-then
+  ok  if-else
+  ok  quote
+  ok  not a function
+
+Part 2: Variable override + undo
+  ok  n before
+  ok  n after meta
+  ok  (+ n 10) after meta
+  ok  n after undo
+
+Part 3: Numbers as functions (multn)
+  ok  (2 3 4)
+  ok  (5 5)
+  ok  (2 3 4) after undo
+
+Part 4: Roman numerals
+  ok  (+ 1 2) roman
+  ok  (* 4 5) roman
+  ok  (+ 1 2) after undo
+
+18 passed, 0 failed
+```
+
+The LLM may generate different code each run, but the assertions
+check exact behavior. Approximate generation, exact execution.
+
 ## Examples that work
 
 - `"make variable n always evaluate to 0"` -- like Black's undo.blk walkthrough
