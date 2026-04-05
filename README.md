@@ -123,6 +123,10 @@ understanding produces an exact artifact (code) that the interpreter
 runs deterministically. The approximation is in the *generation*; the
 execution is precise.
 
+## Tutorial
+
+See [TUTORIAL.md](TUTORIAL.md) for a step-by-step walkthrough.
+
 ## Tests
 
 ```bash
