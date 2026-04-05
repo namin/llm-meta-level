@@ -1,0 +1,17 @@
+{
+  "name": "tower",
+  "version": "0.0.1",
+  "description": "A heterogeneous reflective tower: exact interpreter + LLM oracle",
+  "type": "module",
+  "scripts": {
+    "start": "node --loader ts-node/esm index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/bedrock-sdk": "^0.26.4",
+    "@anthropic-ai/sdk": "^0.79.0",
+    "@anthropic-ai/vertex-sdk": "^0.14.4",
+    "@google/genai": "^1.48.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.0"
+  }
+}
