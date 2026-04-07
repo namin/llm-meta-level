@@ -1,32 +1,41 @@
 # tower
 
-A heterogeneous reflective tower where level 0 is an exact Scheme-like
-interpreter, level 1 is an LLM that modifies the interpreter, and
-level 2 is an LLM that modifies the meta-level itself.
+A heterogeneous reflective tower of arbitrary depth.
+
+Level 0 is an exact Scheme-like interpreter. Levels 1, 2, 3, ... are
+LLMs, each modifying the level below. Every boundary between levels
+has a verification gate modeled on Blond's `_check_and_spawn`. New
+levels are created lazily — the tower grows upward on demand, like
+Black's infinite tower.
 
 ## The idea
 
 In Black, every level of the tower is the same Scheme interpreter.
 Here, the levels are heterogeneous: the object level is deterministic,
-the meta-levels are approximate (LLMs), and every boundary between
-levels has a verification gate modeled on Blond's `_check_and_spawn`.
+the meta-levels are approximate (LLMs), and every boundary has a
+verification gate.
 
 ```
-┌─────────────────────────────────────────────────┐
-│ Level 2: LLM (modifies the meta-level)          │
-│   adds policies, custom checks, adjusts config  │
-├────────── verify 1↔2 ───────────────────────────┤
-│ Level 1: LLM (modifies the interpreter)         │
-│   generates code replacements for level 0       │
-├────────── verify 0↔1 ───────────────────────────┤
-│ Level 0: exact Scheme interpreter               │
-│   baseEval, evalVar, baseApply, ...             │
-└─────────────────────────────────────────────────┘
+         ┌─────────────────────────────────┐
+         │ Level N: LLM                    │
+         │   modifies boundary (N-2)↔(N-1) │
+         ├─── verify (N-1)↔N ──────────────┤
+         │         ...                     │
+         ├─── verify 1↔2 ──────────────────┤
+         │ Level 2: LLM                    │
+         │   modifies boundary 0↔1         │
+         ├─── verify 0↔1 ──────────────────┤
+         │ Level 1: LLM                    │
+         │   modifies interpreter          │
+verify → ├─────────────────────────────────┤
+         │ Level 0: exact interpreter      │
+         │   baseEval, evalVar, baseApply  │
+         └─────────────────────────────────┘
 ```
 
-Each level is decomposed into named modifiable components, and the
-level above modifies those components through a structured interface
-with verification at each boundary.
+Each level is decomposed into modifiable components. The level above
+modifies those components through a structured interface with
+verification at each boundary.
 
 ## Levels
 
@@ -51,37 +60,30 @@ replacement code:
 }
 ```
 
-The LLM's generation is approximate; the code it produces runs
-exactly. The JSON boundary is where verification sits.
+### Levels 2, 3, ... — LLM meta-modifiers
 
-### Level 2 — LLM meta-modifier
+Each level N (N ≥ 2) modifies the boundary below it. Every boundary
+has the same modifiable components:
 
-Modifies level 1's behavior. Level 1 is decomposed into:
-
-- **policies** — constraints appended to the code-generating LLM's
-  system prompt (e.g., "always wrap original calls in try/catch")
+- **policies** — constraints appended to the level below's system
+  prompt
 - **customChecks** — extra verification checks run before a
-  modification is installed (e.g., "baseEval cannot be modified")
-- **maxAttempts** — how many tries the LLM gets to pass verification
+  modification is installed
+- **maxAttempts** — how many tries the level below gets to pass
+  verification
 
-Level 2 generates modifications to these components:
-
-```json
-{
-  "type": "check",
-  "name": "protect-baseEval",
-  "code": "(interp, mod) => mod.fnName === 'baseEval' ? [{check: 'policy', message: 'baseEval is protected'}] : []",
-  "description": "Prevents any modification to baseEval"
-}
-```
+This is a governance hierarchy:
+- Level 1 writes code
+- Level 2 constrains how code is written
+- Level 3 constrains how constraints are set
+- Level N constrains level N-1
 
 ## Verification gates
 
 Every boundary has a verification gate inspired by Blond's
-`_check_and_spawn`, which checks three conditions before reflecting
-down: expressible, ecological, continuable.
+`_check_and_spawn`.
 
-### Boundary 0↔1 (verify.ts)
+### Boundary 0↔1 (interpreter modifications)
 
 | Check | Blond analogue | What it checks |
 |-------|---------------|----------------|
@@ -89,23 +91,24 @@ down: expressible, ecological, continuable.
 | **Ecological** | `_ecological?` | No `require`, `eval`, `process.exit`, etc. |
 | **Continuable** | `_continuable?` | Compiles to a function |
 | **Sandbox** | (beyond Blond) | Doesn't crash on basic inputs |
-| **Custom** | (from level 2) | Any checks installed by level 2 |
+| **Custom** | (from level 2+) | Any checks installed by higher levels |
 
-### Boundary 1↔2 (metameta.ts)
+### Boundaries N↔(N+1) (meta-level modifications)
 
 | Check | What it checks |
 |-------|----------------|
 | **Expressible** | Valid modification type, required fields present, code parses |
 | **Ecological** | No forbidden bindings in check code |
 | **Continuable** | Check code compiles to a function |
+| **Custom** | Any checks installed by even higher levels |
 
 When verification fails, violations are fed back to the LLM, which
-regenerates. The meta-level adapts at the moment of reflection,
-not in a separate phase.
+regenerates.
 
 ## Setup
 
 ```bash
+cd tower
 npm install
 ```
 
@@ -115,7 +118,7 @@ or `GOOGLE_CLOUD_PROJECT` (for Vertex).
 ## Usage
 
 ```bash
-node --loader ts-node/esm index.ts
+npx tsx index.ts
 ```
 
 ### Level 0 — exact evaluation
@@ -132,25 +135,25 @@ tower> (fact 5)
 ### Level 1 — modifying the interpreter
 
 ```
-tower> (exec-at-metalevel "make numbers work as functions that multiply their arguments")
+tower> (meta 1 "make numbers work as functions that multiply their arguments")
   [level 1] asking LLM: "make numbers work as functions..."
   [verify 0↔1] attempt 1: ok
   [level 1] modified baseApply: Numbers applied as functions multiply all arguments
 tower> (2 3 4)
 24
-tower> (undo!)
-undone.
+tower> (undo 1)
+level 1: undone.
 ```
 
 ### Level 2 — modifying the meta-level
 
 ```
-tower> (exec-at-meta-metalevel "protect baseEval from modification")
+tower> (meta 2 "protect baseEval from modification")
   [level 2] asking LLM: "protect baseEval from modification"
   [verify 1↔2] attempt 1: ok
-  [level 2] check: Prevents any modification to baseEval
+  [level 2] Prevents any modification to baseEval
 
-tower> (exec-at-metalevel "intercept all evaluation")
+tower> (meta 1 "intercept all evaluation")
   [level 1] asking LLM: "intercept all evaluation"
   [verify 0↔1] attempt 1: REJECTED
     policy: baseEval is protected
@@ -158,57 +161,73 @@ tower> (exec-at-metalevel "intercept all evaluation")
   [verify 0↔1] attempt 2: ok
   [level 1] modified evalList: intercepts via evalList instead
 
-tower> (undo-meta!)
-meta undone.
+tower> (undo 2)
+level 2: undone.
 ```
 
-### Inspecting state
+### Level 3+ — the tower grows
 
 ```
-tower> (show-meta)
-level 0↔1:
-  0: modified baseApply
-level 1↔2:
-  0: modified customChecks
-policies:
-  0: Always wrap original calls in try/catch
-custom checks:
-  0: protect-baseEval
+tower> (meta 3 "only allow security-related policies at level 2")
+  [level 3] asking LLM: "only allow security-related policies"
+  [verify 2↔3] attempt 1: ok
+  [level 3] Only security-related policies allowed
+
+tower> (show-tower)
+level 0 (interpreter):
+  0: modified evalList
+boundary 0↔1:
+  checks:
+    0: protect-baseEval
+  undo stack: 1 entries
+boundary 1↔2:
+  policies:
+    0: Only security-related policies allowed
+  undo stack: 1 entries
 ```
 
 ## Architecture
 
 ```
-index.ts         REPL connecting all three levels
+index.ts         REPL connecting all levels
 interpreter.ts   Level 0: Scheme interpreter with named modifiable functions
-meta.ts          Level 1: LLM code generator + MetaLevel state
-metameta.ts      Level 2: LLM that modifies the meta-level
-verify.ts        Verification gate for boundary 0↔1
+tower.ts         The tower: boundaries, verification, LLM interaction at all levels
+verify.ts        Verification gate for boundary 0↔1 (Blond-style checks)
 llm.ts           Multi-backend LLM client
+test-local.ts    Tests without LLM (interpreter, verification, tower mechanics)
+test.ts          Tests with LLM (level 1 modifications)
+```
+
+## Tests
+
+Local tests (no LLM needed):
+
+```bash
+npx tsx test-local.ts
+```
+
+Full tests (requires LLM credentials):
+
+```bash
+npx tsx test.ts
 ```
 
 ## How it relates to Black and Blond
 
 In Black's reflective tower, every level is the same Scheme
 interpreter. `(exec-at-metalevel ...)` evaluates Scheme at the level
-above, and `(set! base-apply ...)` replaces an interpreter function.
-The tower is homogeneous — Scheme all the way up — so there is no
-natural boundary where verification could sit.
+above. The tower is homogeneous — Scheme all the way up — so there
+is no natural boundary where verification could sit.
 
 This tower is heterogeneous: exact at level 0, approximate at levels
-1 and 2. The heterogeneity forces an explicit interface at each
-boundary — a JSON object between levels 0 and 1, another between
-levels 1 and 2. These interfaces are the natural verification
-surfaces, analogous to Blond's `_check_and_spawn` but arising from
-the mismatch between levels rather than from explicit design.
+1+. The heterogeneity forces an explicit interface at each
+boundary — a JSON object between each pair of levels. These
+interfaces are the natural verification surfaces, analogous to
+Blond's `_check_and_spawn` but arising from the mismatch between
+levels rather than from explicit design.
 
 The key property: approximation is quarantined to the *production*
-of artifacts (the LLM generates code), while *execution* is exact
-(the code runs deterministically). Verification sits at the boundary
-between production and execution.
-
-## Tests
-
-```bash
-node --loader ts-node/esm test.ts
-```
+of artifacts (the LLM generates code or policies), while *execution*
+is exact (the code runs deterministically, the policies are enforced
+literally). Verification sits at the boundary between production and
+execution.

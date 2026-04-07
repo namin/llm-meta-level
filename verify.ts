@@ -9,7 +9,14 @@
 // (LLM) and the exact object-level (interpreter).
 
 import { Interpreter, InterpFnName, evaluate, parse, printValue, modifyInterpreter, undoInterpreter } from "./interpreter.js";
-import { MetaModification } from "./meta.js";
+
+// The artifact at the level 0↔1 boundary: which interpreter function
+// to replace and the replacement code.
+export interface InterpModification {
+  fnName: InterpFnName;
+  code: string;
+  description: string;
+}
 
 const VALID_FN_NAMES: InterpFnName[] = [
   "baseEval", "evalVar", "evalIf", "evalDefine",
@@ -18,7 +25,7 @@ const VALID_FN_NAMES: InterpFnName[] = [
 ];
 
 export interface Violation {
-  check: "expressible" | "ecological" | "continuable" | "sandbox";
+  check: string;
   message: string;
 }
 
@@ -33,7 +40,7 @@ export interface VerifyResult {
 // Here: does fnName refer to a real interpreter function, and does
 // the code parse as a JavaScript function?
 
-function checkExpressible(mod: MetaModification): Violation[] {
+function checkExpressible(mod: InterpModification): Violation[] {
   const vs: Violation[] = [];
 
   if (!VALID_FN_NAMES.includes(mod.fnName)) {
@@ -63,7 +70,7 @@ function checkExpressible(mod: MetaModification): Violation[] {
 
 const FORBIDDEN = /\b(require|import\s*\(|process\.(exit|env|argv)|eval\s*\(|Function\s*\(|fs\.|child_process|__dirname|__filename)/;
 
-function checkEcological(mod: MetaModification): Violation[] {
+function checkEcological(mod: InterpModification): Violation[] {
   if (FORBIDDEN.test(mod.code)) {
     return [{
       check: "ecological",
@@ -78,7 +85,7 @@ function checkEcological(mod: MetaModification): Violation[] {
 // Here: does the compiled function exist and have compatible arity
 // with the function it replaces?
 
-function checkContinuable(interp: Interpreter, mod: MetaModification): Violation[] {
+function checkContinuable(interp: Interpreter, mod: InterpModification): Violation[] {
   const vs: Violation[] = [];
 
   if (!VALID_FN_NAMES.includes(mod.fnName)) return vs; // caught by expressible
@@ -123,7 +130,7 @@ const SMOKE_TESTS: string[] = [
   "42",
 ];
 
-function checkSandbox(interp: Interpreter, mod: MetaModification): Violation[] {
+function checkSandbox(interp: Interpreter, mod: InterpModification): Violation[] {
   const vs: Violation[] = [];
 
   if (!VALID_FN_NAMES.includes(mod.fnName)) return vs;
@@ -163,7 +170,7 @@ function checkSandbox(interp: Interpreter, mod: MetaModification): Violation[] {
 
 // --- The gate ---
 
-export function verifyModification(interp: Interpreter, mod: MetaModification): VerifyResult {
+export function verifyModification(interp: Interpreter, mod: InterpModification): VerifyResult {
   const violations = [
     ...checkExpressible(mod),
     ...checkEcological(mod),
