@@ -62,9 +62,17 @@ async function handleInput(line: string): Promise<string> {
     const reqStr = typeof request === "string" ? request : printValue(request);
     try {
       console.log(`\x1b[2m  [meta-level] asking LLM: "${reqStr}"\x1b[0m`);
-      const mod = await execAtMetaLevel(reqStr, interp);
-      console.log(`\x1b[2m  [meta-level] modified ${mod.fnName}: ${mod.description}\x1b[0m`);
-      return `meta: ${mod.description}`;
+      const result = await execAtMetaLevel(reqStr, interp, (attempt, mod, violations) => {
+        if (violations.length > 0) {
+          console.log(`\x1b[2m  [verify] attempt ${attempt}: REJECTED\x1b[0m`);
+          for (const v of violations) console.log(`\x1b[2m    ${v}\x1b[0m`);
+          console.log(`\x1b[2m  [verify] feeding violations back to LLM...\x1b[0m`);
+        } else {
+          console.log(`\x1b[2m  [verify] attempt ${attempt}: expressible, ecological, continuable, sandbox — ok\x1b[0m`);
+        }
+      });
+      console.log(`\x1b[2m  [meta-level] modified ${result.mod.fnName}: ${result.mod.description}\x1b[0m`);
+      return `meta: ${result.mod.description}`;
     } catch (e: any) {
       return `meta error: ${e.message}`;
     }

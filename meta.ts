@@ -4,6 +4,7 @@
 
 import { chat } from "./llm.js";
 import { Interpreter, InterpFnName, modifyInterpreter } from "./interpreter.js";
+import { verifyModification, VerifyResult } from "./verify.js";
 
 const SYSTEM_PROMPT = `You are the meta-level of a reflective tower of interpreters.
 
@@ -66,38 +67,73 @@ export interface MetaModification {
   description: string;
 }
 
+export interface ExecResult {
+  mod: MetaModification;
+  attempts: number;
+  history: { mod: MetaModification; violations: string[] }[];
+}
+
+const MAX_ATTEMPTS = 3;
+
 export async function execAtMetaLevel(
   request: string,
   interp: Interpreter,
-): Promise<MetaModification> {
-  const text = await chat(
-    [{ role: "user", content: request }],
-    { system: SYSTEM_PROMPT, tier: "fast", maxTokens: 1024 },
-  );
+  onAttempt?: (attempt: number, mod: MetaModification, violations: string[]) => void,
+): Promise<ExecResult> {
+  const messages: { role: "user" | "assistant"; content: string }[] = [
+    { role: "user", content: request },
+  ];
+  const history: { mod: MetaModification; violations: string[] }[] = [];
 
-  // Extract the last JSON object from the response
-  // (the LLM sometimes includes preamble or multiple attempts)
-  let mod: MetaModification;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const text = await chat(
+      messages,
+      { system: SYSTEM_PROMPT, tier: "fast", maxTokens: 1024 },
+    );
+
+    const mod = parseModification(text);
+
+    // --- Verification gate (cf. Blond's _check_and_spawn) ---
+    const result = verifyModification(interp, mod);
+    const violations = result.violations.map(v => `${v.check}: ${v.message}`);
+
+    if (onAttempt) onAttempt(attempt, mod, violations);
+    history.push({ mod, violations });
+
+    if (result.ok) {
+      applyModification(interp, mod);
+      return { mod, attempts: attempt, history };
+    }
+
+    // Feed violations back to the LLM for another attempt
+    messages.push({ role: "assistant", content: text });
+    messages.push({
+      role: "user",
+      content: `That modification failed verification:\n${violations.join("\n")}\n\nPlease fix and try again. Respond with only the corrected JSON object.`,
+    });
+  }
+
+  const lastViolations = history[history.length - 1].violations;
+  throw new Error(
+    `Verification failed after ${MAX_ATTEMPTS} attempts:\n  ${lastViolations.join("\n  ")}`,
+  );
+}
+
+function parseModification(text: string): MetaModification {
   const jsonMatches = [...text.matchAll(/\{[\s\S]*?"fnName"[\s\S]*?"code"[\s\S]*?"description"[\s\S]*?\}\s*$/gm)];
   if (jsonMatches.length === 0) {
-    // Try parsing the whole thing
     try {
-      mod = JSON.parse(text);
+      return JSON.parse(text);
     } catch {
       throw new Error(`Meta-level returned invalid JSON:\n${text}`);
     }
-  } else {
-    // Take the last match
-    const jsonStr = jsonMatches[jsonMatches.length - 1][0];
-    try {
-      mod = JSON.parse(jsonStr);
-    } catch {
-      throw new Error(`Meta-level returned unparseable JSON:\n${jsonStr}`);
-    }
   }
-
-  applyModification(interp, mod);
-  return mod;
+  const jsonStr = jsonMatches[jsonMatches.length - 1][0];
+  try {
+    return JSON.parse(jsonStr);
+  } catch {
+    throw new Error(`Meta-level returned unparseable JSON:\n${jsonStr}`);
+  }
 }
 
 export function applyModification(interp: Interpreter, mod: MetaModification): void {
