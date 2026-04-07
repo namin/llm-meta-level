@@ -1,12 +1,11 @@
 # Tutorial
 
 This tutorial walks through the heterogeneous reflective tower.
-We have two levels:
 
 - **Level 0**: a small Scheme interpreter with modifiable evaluation
   functions (like Black)
-- **Level 1**: an LLM that generates code to modify those functions
-  (from natural language)
+- **Levels 1, 2, 3, ...**: LLMs that modify the level below, each
+  governed by a verification gate (like Blond's `_check_and_spawn`)
 
 ## Setup
 
@@ -22,7 +21,7 @@ resolution order.
 Start the REPL:
 
 ```bash
-node --loader ts-node/esm index.ts
+npx tsx index.ts
 ```
 
 ## Part 1: The exact interpreter
@@ -67,9 +66,10 @@ tower> (define n 5)
 n
 tower> n
 5
-tower> (exec-at-metalevel "make variable n always evaluate to 0")
-  [meta-level] asking LLM: "make variable n always evaluate to 0"
-  [meta-level] modified evalVar: Variable n always evaluates to 0, others unchanged
+tower> (meta 1 "make variable n always evaluate to 0")
+  [level 1] asking LLM: "make variable n always evaluate to 0"
+  [verify 0↔1] attempt 1: ok
+  [level 1] modified evalVar: Variable n always evaluates to 0
 tower> n
 0
 tower> (+ n 10)
@@ -87,31 +87,26 @@ object:
 }
 ```
 
-This says: replace `evalVar` with a new function that returns 0 for
-`n` and delegates to the `original` function for everything else. The
-code string is compiled into a real JavaScript function and installed
-in the interpreter. Execution is exact from that point on.
+Before installation, the verification gate checked four conditions
+(cf. Blond's `_check_and_spawn`):
+
+- **Expressible**: `evalVar` is a valid function name, code parses
+- **Ecological**: no `require`, `eval`, `process.exit`, etc.
+- **Continuable**: compiles to a function
+- **Sandbox**: doesn't crash on basic inputs like `(+ 1 2)`
+
+All passed, so the code was compiled and installed.
 
 ## Part 3: Undo
 
-Every modification is tracked. `(undo!)` restores the previous
+Every modification is tracked. `(undo 1)` restores the previous
 function:
 
 ```
-tower> (undo!)
-undone.
+tower> (undo 1)
+level 1: undone.
 tower> n
 5
-```
-
-Clean rollback. The interpreter is back to its original state.
-
-You can also inspect the modification history:
-
-```
-tower> (show-meta)
-  0: modified evalVar
-  1: modified baseApply
 ```
 
 ## Part 4: Replicating Black's examples
@@ -122,92 +117,133 @@ In Black, `multn.blk` redefines `base-apply` so that numbers used
 as operators multiply their arguments:
 
 ```
-tower> (exec-at-metalevel "make numbers work as functions that multiply their arguments")
+tower> (meta 1 "make numbers work as functions that multiply their arguments")
 tower> (2 3 4)
 24
 tower> (5 5)
 25
-tower> (undo!)
-undone.
+tower> (undo 1)
+level 1: undone.
 tower> (2 3 4)
 error: not a function: 2
 ```
 
 ### Tracing
 
-In Black, you wrap `base-eval` to trace expressions. Here:
-
 ```
-tower> (exec-at-metalevel "trace all variable lookups, printing the variable name and value")
+tower> (meta 1 "trace all variable lookups, printing the variable name and value")
 tower> (define x 42)
 x
 tower> (+ x 1)
 lookup x -> 42
 43
-tower> (undo!)
-undone.
+tower> (undo 1)
+level 1: undone.
 ```
 
-### Instrumentation
+### Roman numerals
 
 ```
-tower> (exec-at-metalevel "make if expressions print which branch they take before evaluating")
-tower> (if (> 3 2) 10 20)
-if: taking then branch
-10
-tower> (if (< 3 2) 10 20)
-if: taking else branch
-20
-tower> (undo!)
-undone.
-```
-
-## Part 5: Going beyond Black
-
-Because the meta level is an LLM, you can ask for things that would
-be tedious to write by hand:
-
-```
-tower> (exec-at-metalevel "make +, -, and * return roman numeral strings")
+tower> (meta 1 "make +, -, and * return roman numeral strings")
 tower> (+ 1 2)
 III
 tower> (* 4 5)
 XX
-tower> (- 100 58)
-XLII
-tower> (undo!)
-undone.
+tower> (undo 1)
+level 1: undone.
 ```
 
-```
-tower> (exec-at-metalevel "memoize all function applications")
-tower> (fact 10)
-3628800
-tower> (fact 10)
-3628800
-tower> (undo!)
-undone.
-```
+## Part 5: The verification gate in action
+
+When the LLM generates bad code, the gate catches it and feeds the
+violations back. The LLM gets another attempt:
 
 ```
-tower> (exec-at-metalevel "create an inspector that gives all the variables bound")
-tower> (define a 1)
-a
-tower> (define b 2)
-b
-tower> (inspect-env)
-((a . 1) (b . 2) ...)
-tower> (undo!)
-undone.
+tower> (meta 1 "do something with eval")
+  [level 1] asking LLM: "do something with eval"
+  [verify 0↔1] attempt 1: REJECTED
+    ecological: code references forbidden bindings
+  [verify 0↔1] feeding violations back to LLM...
+  [verify 0↔1] attempt 2: ok
+  [level 1] modified baseEval: ...
 ```
 
-The LLM has to figure out *which* interpreter function to modify
-and *how* to implement your request within the interpreter's
-structure. Sometimes its choices are surprising — for example,
-it might implement `inspect-env` by modifying `evalVar` to
-intercept the name `inspect-env` and return the environment.
+The gate rejected the first attempt (the LLM used `eval()`), told
+it why, and the LLM self-corrected.
 
-## Part 6: How it works
+## Part 6: Going up — level 2 modifies level 1
+
+Level 2 is an LLM that modifies level 1's behavior. Level 1 is
+decomposed into modifiable components — just as level 0's interpreter
+is decomposed into named functions:
+
+- **policies**: constraints appended to level 1's system prompt
+- **customChecks**: extra verification checks before modifications
+  are installed
+- **maxAttempts**: how many tries level 1 gets
+
+```
+tower> (meta 2 "protect baseEval from modification")
+  [level 2] asking LLM: "protect baseEval from modification"
+  [verify 1↔2] attempt 1: ok
+  [level 2] Prevents any modification to baseEval
+```
+
+Now level 1 can't touch `baseEval`:
+
+```
+tower> (meta 1 "intercept all evaluation")
+  [level 1] asking LLM: "intercept all evaluation"
+  [verify 0↔1] attempt 1: REJECTED
+    policy: baseEval is protected
+  [verify 0↔1] feeding violations back to LLM...
+  [verify 0↔1] attempt 2: ok
+  [level 1] modified evalList: intercepts evaluation via evalList instead
+```
+
+The LLM adapted — it modified `evalList` instead of `baseEval`.
+
+Undo at level 2 removes the protection:
+
+```
+tower> (undo 2)
+level 2: undone.
+```
+
+## Part 7: Going higher — the tower grows on demand
+
+Level 3 constrains level 2, level 4 constrains level 3, etc.
+New levels are created lazily:
+
+```
+tower> (meta 3 "only allow security-related checks at level 2")
+  [level 3] asking LLM: ...
+  [verify 2↔3] attempt 1: ok
+  [level 3] Only security-related checks allowed
+```
+
+This is a governance hierarchy:
+- Level 1 writes code
+- Level 2 constrains how code is written
+- Level 3 constrains how constraints are set
+- ...
+
+Use `(show-tower)` to inspect the full state:
+
+```
+tower> (show-tower)
+level 0 (interpreter):
+  0: modified evalList
+boundary 0↔1:
+  checks:
+    0: protect-baseEval
+boundary 1↔2:
+  policies:
+    0: Only security-related checks allowed
+  undo stack: 1 entries
+```
+
+## Part 8: How it works
 
 The interpreter (level 0) is decomposed into named functions:
 
@@ -224,27 +260,28 @@ The interpreter (level 0) is decomposed into named functions:
 | `evalList` | Evaluate a list of expressions |
 | `myError` | Handle errors |
 
-Each function takes `(args..., env, interp)` and can call other
-functions via `interp.fnName(...)`. This is like Black, where
-`base-eval`, `eval-var`, `base-apply`, etc. are bindings in the
-meta-level environment that can be individually `set!`'d.
+Each meta-level boundary is decomposed into:
 
-When you call `(exec-at-metalevel "...")`:
+| Component | Role |
+|-----------|------|
+| `policies` | Constraints in the system prompt |
+| `customChecks` | Extra verification functions |
+| `maxAttempts` | Retry budget |
+
+When you call `(meta N "...")`:
 
 1. The string goes to the LLM with a system prompt describing
-   these functions and their signatures.
-2. The LLM returns JSON: `{ fnName, code, description }`.
-3. The `code` string is compiled via `new Function("original", ...)`
-   with `original` bound to the current function.
-4. The old function is pushed onto the undo stack.
-5. The new function takes its place.
+   level N-1's modifiable components (+ any policies from
+   boundary (N-1)↔N).
+2. The LLM returns a JSON modification.
+3. The verification gate checks it (expressible, ecological,
+   continuable, sandbox for level 1; expressible, ecological,
+   continuable for higher levels; plus custom checks from above).
+4. If verification fails, violations are fed back to the LLM.
+5. If verification passes, the modification is installed and the
+   old value is pushed onto the undo stack.
 
-The LLM's generation is approximate (it might produce wrong code).
-The execution is exact (JavaScript runs deterministically).
-The boundary between the two is the JSON object — inspectable,
-and a natural place for verification.
-
-## Part 7: The connection to reflective towers
+## Part 9: The connection to reflective towers
 
 In Black's reflective tower:
 
@@ -252,17 +289,19 @@ In Black's reflective tower:
 - `(exec-at-metalevel ...)` evaluates Scheme at the level above
 - The meta level can mutate any interpreter function via `set!`
 - Modifications are exact because Scheme is exact
+- The tower is infinite (always another level above)
 
 In this tower:
 
-- Level 0 is an exact interpreter (TypeScript)
-- Level 1 is an LLM (approximate)
-- `(exec-at-metalevel "...")` sends natural language to the LLM
-- The LLM generates exact code that modifies the interpreter
+- Level 0 is exact; levels 1+ are approximate (LLMs)
+- `(meta N "...")` sends natural language to level N
+- Level N generates an exact artifact that modifies level N-1
 - The generation is approximate but the modification is exact
+- The tower grows lazily (new levels on demand)
 
-The heterogeneity — one exact level, one approximate level — makes
-the boundary between them explicit. In Black, you can't tell where
-the interpreter ends and the meta level begins (it's Scheme all the
-way up). Here, the boundary is the JSON object, and that's where
-verification could sit.
+The heterogeneity — exact vs. approximate — forces an explicit
+boundary between every pair of levels. In Black, you can't tell
+where the interpreter ends and the meta level begins (it's Scheme
+all the way up). Here, the boundary is a JSON object, and that's
+where verification sits — like Blond's `_check_and_spawn`, but at
+every level.
