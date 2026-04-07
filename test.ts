@@ -9,7 +9,7 @@ import {
   undoInterpreter,
   Interpreter,
 } from "./interpreter.js";
-import { execAtMetaLevel } from "./meta.js";
+import { makeTower, execAtLevel, undoAtLevel } from "./tower.js";
 
 let passed = 0;
 let failed = 0;
@@ -56,46 +56,46 @@ function testExactInterpreter() {
   assert("not a function", evalStr(interp, "(2 3 4)"), "error: not a function: 2");
 }
 
-// --- Part 2-5: LLM meta-level ---
+// --- Part 2-4: LLM meta-level (level 1) ---
 
 async function testMetaLevel() {
   console.log("\nPart 2: Variable override + undo");
   {
-    const interp = makeInterpreter();
-    evalStr(interp, "(define n 5)");
-    assert("n before", evalStr(interp, "n"), "5");
+    const tower = makeTower(makeInterpreter());
+    evalStr(tower.interp, "(define n 5)");
+    assert("n before", evalStr(tower.interp, "n"), "5");
 
-    await execAtMetaLevel("make variable n always evaluate to 0", interp);
-    assert("n after meta", evalStr(interp, "n"), "0");
-    assert("(+ n 10) after meta", evalStr(interp, "(+ n 10)"), "10");
+    await execAtLevel(tower, 1, "make variable n always evaluate to 0");
+    assert("n after meta", evalStr(tower.interp, "n"), "0");
+    assert("(+ n 10) after meta", evalStr(tower.interp, "(+ n 10)"), "10");
 
-    undoInterpreter(interp);
-    assert("n after undo", evalStr(interp, "n"), "5");
+    undoAtLevel(tower, 1);
+    assert("n after undo", evalStr(tower.interp, "n"), "5");
   }
 
   console.log("\nPart 3: Numbers as functions (multn)");
   {
-    const interp = makeInterpreter();
-    await execAtMetaLevel("make numbers work as functions that multiply their arguments", interp);
-    assert("(2 3 4)", evalStr(interp, "(2 3 4)"), "24");
-    assert("(5 5)", evalStr(interp, "(5 5)"), "25");
+    const tower = makeTower(makeInterpreter());
+    await execAtLevel(tower, 1, "make numbers work as functions that multiply their arguments");
+    assert("(2 3 4)", evalStr(tower.interp, "(2 3 4)"), "24");
+    assert("(5 5)", evalStr(tower.interp, "(5 5)"), "25");
 
-    undoInterpreter(interp);
-    assert("(2 3 4) after undo", evalStr(interp, "(2 3 4)"), "error: not a function: 2");
+    undoAtLevel(tower, 1);
+    assert("(2 3 4) after undo", evalStr(tower.interp, "(2 3 4)"), "error: not a function: 2");
   }
 
   console.log("\nPart 4: Roman numerals");
   {
-    const interp = makeInterpreter();
-    await execAtMetaLevel(
+    const tower = makeTower(makeInterpreter());
+    await execAtLevel(
+      tower, 1,
       "make all applications of +, -, and * return their result as a roman numeral string instead of a number",
-      interp,
     );
-    assert("(+ 1 2) roman", evalStr(interp, "(+ 1 2)"), "III");
-    assert("(* 4 5) roman", evalStr(interp, "(* 4 5)"), "XX");
+    assert("(+ 1 2) roman", evalStr(tower.interp, "(+ 1 2)"), "III");
+    assert("(* 4 5) roman", evalStr(tower.interp, "(* 4 5)"), "XX");
 
-    undoInterpreter(interp);
-    assert("(+ 1 2) after undo", evalStr(interp, "(+ 1 2)"), "3");
+    undoAtLevel(tower, 1);
+    assert("(+ 1 2) after undo", evalStr(tower.interp, "(+ 1 2)"), "3");
   }
 }
 
