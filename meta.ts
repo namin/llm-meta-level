@@ -1,12 +1,16 @@
 // The LLM meta-level: given a natural language request,
 // generates JavaScript code that modifies the interpreter.
 // This is the approximate oracle in the heterogeneous tower.
+//
+// The meta-level is itself decomposed into modifiable components
+// (policies, custom checks, retry budget) so that the meta-meta-level
+// (level 2) can modify it, just as level 1 modifies level 0.
 
 import { chat } from "./llm.js";
 import { Interpreter, InterpFnName, modifyInterpreter } from "./interpreter.js";
-import { verifyModification, VerifyResult } from "./verify.js";
+import { verifyModification, Violation, VerifyResult } from "./verify.js";
 
-const SYSTEM_PROMPT = `You are the meta-level of a reflective tower of interpreters.
+const BASE_SYSTEM_PROMPT = `You are the meta-level of a reflective tower of interpreters.
 
 The object level is a small Scheme interpreter in TypeScript with these modifiable functions:
 
@@ -73,28 +77,86 @@ export interface ExecResult {
   history: { mod: MetaModification; violations: string[] }[];
 }
 
-const MAX_ATTEMPTS = 3;
+// --- The meta-level, decomposed into modifiable pieces ---
+// Analogous to Interpreter: named components that level 2 can modify.
+
+export interface CustomCheck {
+  name: string;
+  check: (interp: Interpreter, mod: MetaModification) => Violation[];
+}
+
+export interface MetaLevel {
+  policies: string[];           // extra constraints appended to system prompt
+  customChecks: CustomCheck[];  // extra verification checks (from level 2)
+  maxAttempts: number;
+
+  // Undo stack: each entry is [component, previousValue]
+  undoStack: [string, any][];
+}
+
+export function makeMetaLevel(): MetaLevel {
+  return {
+    policies: [],
+    customChecks: [],
+    maxAttempts: 3,
+    undoStack: [],
+  };
+}
+
+export function modifyMetaLevel(meta: MetaLevel, component: string, value: any): void {
+  const old = (meta as any)[component];
+  meta.undoStack.push([component, Array.isArray(old) ? [...old] : old]);
+  (meta as any)[component] = value;
+}
+
+export function undoMetaLevel(meta: MetaLevel): boolean {
+  const entry = meta.undoStack.pop();
+  if (!entry) return false;
+  const [component, oldVal] = entry;
+  (meta as any)[component] = oldVal;
+  return true;
+}
+
+// Build the full system prompt from base + policies
+function buildSystemPrompt(meta: MetaLevel): string {
+  if (meta.policies.length === 0) return BASE_SYSTEM_PROMPT;
+  return BASE_SYSTEM_PROMPT + "\n\nAdditional policies (you MUST follow these):\n" +
+    meta.policies.map((p, i) => `${i + 1}. ${p}`).join("\n") + "\n";
+}
+
+// Run verification: built-in checks + any custom checks from level 2
+function fullVerify(interp: Interpreter, mod: MetaModification, meta: MetaLevel): VerifyResult {
+  const base = verifyModification(interp, mod);
+  const customViolations: Violation[] = [];
+  for (const cc of meta.customChecks) {
+    customViolations.push(...cc.check(interp, mod));
+  }
+  const allViolations = [...base.violations, ...customViolations];
+  return { ok: allViolations.length === 0, violations: allViolations };
+}
 
 export async function execAtMetaLevel(
   request: string,
   interp: Interpreter,
+  meta: MetaLevel,
   onAttempt?: (attempt: number, mod: MetaModification, violations: string[]) => void,
 ): Promise<ExecResult> {
   const messages: { role: "user" | "assistant"; content: string }[] = [
     { role: "user", content: request },
   ];
   const history: { mod: MetaModification; violations: string[] }[] = [];
+  const systemPrompt = buildSystemPrompt(meta);
 
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 1; attempt <= meta.maxAttempts; attempt++) {
     const text = await chat(
       messages,
-      { system: SYSTEM_PROMPT, tier: "fast", maxTokens: 1024 },
+      { system: systemPrompt, tier: "fast", maxTokens: 1024 },
     );
 
     const mod = parseModification(text);
 
     // --- Verification gate (cf. Blond's _check_and_spawn) ---
-    const result = verifyModification(interp, mod);
+    const result = fullVerify(interp, mod, meta);
     const violations = result.violations.map(v => `${v.check}: ${v.message}`);
 
     if (onAttempt) onAttempt(attempt, mod, violations);
@@ -115,7 +177,7 @@ export async function execAtMetaLevel(
 
   const lastViolations = history[history.length - 1].violations;
   throw new Error(
-    `Verification failed after ${MAX_ATTEMPTS} attempts:\n  ${lastViolations.join("\n  ")}`,
+    `Verification failed after ${meta.maxAttempts} attempts:\n  ${lastViolations.join("\n  ")}`,
   );
 }
 

@@ -9,7 +9,7 @@ import {
   undoInterpreter,
   Interpreter,
 } from "./interpreter.js";
-import { execAtMetaLevel } from "./meta.js";
+import { execAtMetaLevel, makeMetaLevel } from "./meta.js";
 
 let passed = 0;
 let failed = 0;
@@ -65,7 +65,7 @@ async function testMetaLevel() {
     evalStr(interp, "(define n 5)");
     assert("n before", evalStr(interp, "n"), "5");
 
-    await execAtMetaLevel("make variable n always evaluate to 0", interp);
+    await execAtMetaLevel("make variable n always evaluate to 0", interp, makeMetaLevel());
     assert("n after meta", evalStr(interp, "n"), "0");
     assert("(+ n 10) after meta", evalStr(interp, "(+ n 10)"), "10");
 
@@ -76,7 +76,7 @@ async function testMetaLevel() {
   console.log("\nPart 3: Numbers as functions (multn)");
   {
     const interp = makeInterpreter();
-    await execAtMetaLevel("make numbers work as functions that multiply their arguments", interp);
+    await execAtMetaLevel("make numbers work as functions that multiply their arguments", interp, makeMetaLevel());
     assert("(2 3 4)", evalStr(interp, "(2 3 4)"), "24");
     assert("(5 5)", evalStr(interp, "(5 5)"), "25");
 
@@ -90,6 +90,7 @@ async function testMetaLevel() {
     await execAtMetaLevel(
       "make all applications of +, -, and * return their result as a roman numeral string instead of a number",
       interp,
+      makeMetaLevel(),
     );
     assert("(+ 1 2) roman", evalStr(interp, "(+ 1 2)"), "III");
     assert("(* 4 5) roman", evalStr(interp, "(* 4 5)"), "XX");
