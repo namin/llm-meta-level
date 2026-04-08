@@ -31,7 +31,10 @@ export interface TsFunction {
 export interface TsModule {
   functions: Map<string, TsFunction>;
   compiled: Record<string, Function>;
-  undoStack: { name: string; fn: TsFunction; compiled: Function }[];
+  undoStack: (
+    | { action: "modify"; name: string; prev: TsFunction; prevCompiled: Function }
+    | { action: "add"; name: string }
+  )[];
 }
 
 // Parse a TS file into exported functions
@@ -141,21 +144,27 @@ export function makeTower(mod: TsModule, workDir: string): Tower {
 const LEVEL1_SYSTEM_PROMPT = `You are the meta-level of a type-checked reflective tower.
 
 The object level is a TypeScript module with typed functions. You can
-replace function implementations but MUST preserve the type signature.
+modify existing functions or add new ones.
 
-Respond with EXACTLY a JSON object:
+To MODIFY an existing function (replace its body, preserving the signature):
 {
-  "function": "the function name to modify",
-  "body": "the new function body (everything inside the braces)",
-  "description": "what this modification does"
+  "function": "the function name",
+  "body": "the new body (everything inside the braces)",
+  "description": "what this does"
 }
 
-IMPORTANT: The function signature (name, parameters, return type) is
-FIXED. You only replace the body. The code must type-check under
---strict.
+To ADD a new function:
+{
+  "function": "the new function name",
+  "full": "the complete TypeScript function: export function name(params): ReturnType { ... }",
+  "description": "what this adds"
+}
+
+When modifying: the signature is FIXED. You only replace the body.
+When adding: you write the full declaration. It must type-check under --strict.
 `;
 
-interface Modification { function: string; body: string; description: string; }
+interface Modification { function: string; body?: string; full?: string; description: string; }
 
 async function execLevel1(tower: Tower, request: string, onAttempt?: OnAttempt): Promise<ExecResult> {
   const boundary = tower.boundaries[0];
@@ -182,19 +191,32 @@ async function execLevel1(tower: Tower, request: string, onAttempt?: OnAttempt):
       continue;
     }
 
-    const fn = tower.mod.functions.get(modification.function);
-    if (!fn) {
-      if (onAttempt) onAttempt(attempt, `unknown function: ${modification.function}`);
-      messages.push({ role: "assistant", content: text }, { role: "user", content: `Unknown function. Available: ${[...tower.mod.functions.keys()].join(", ")}` });
+    const existing = tower.mod.functions.get(modification.function);
+    const isAdd = !existing;
+
+    if (isAdd && !modification.full) {
+      if (onAttempt) onAttempt(attempt, `new function "${modification.function}" requires a "full" field`);
+      messages.push({ role: "assistant", content: text }, { role: "user", content: `Function "${modification.function}" doesn't exist. To add it, provide a "full" field with the complete TypeScript declaration.` });
       continue;
     }
 
-    const newFn: TsFunction = { ...fn, body: modification.body, full: fn.signature + " {\n" + modification.body + "\n}" };
+    let newFn: TsFunction;
+    if (isAdd) {
+      const parsed = parseTsFile(modification.full!);
+      if (parsed.length === 0) {
+        if (onAttempt) onAttempt(attempt, `could not parse "full" as a TypeScript function`);
+        messages.push({ role: "assistant", content: text }, { role: "user", content: `Could not parse the "full" field. It must be "export function name(params): ReturnType { ... }".` });
+        continue;
+      }
+      newFn = parsed[0];
+    } else {
+      newFn = { ...existing, body: modification.body!, full: existing.signature + " {\n" + modification.body + "\n}" };
+    }
+
     const tempFns = new Map(tower.mod.functions);
     tempFns.set(modification.function, newFn);
     const source = [...tempFns.values()].map(f => f.full).join("\n\n") + "\n";
 
-    // --- VERIFICATION GATE: tsc --noEmit ---
     if (onAttempt) onAttempt(attempt, "running tsc --noEmit...");
     const result = typeCheck(source, tower.workDir);
 
@@ -206,7 +228,13 @@ async function execLevel1(tower: Tower, request: string, onAttempt?: OnAttempt):
 
     if (onAttempt) onAttempt(attempt, "TYPE-CHECKED — compiling...");
     const compiled = compileTs(source, tower.workDir);
-    tower.mod.undoStack.push({ name: modification.function, fn, compiled: tower.mod.compiled[modification.function] });
+
+    if (isAdd) {
+      tower.mod.undoStack.push({ action: "add", name: modification.function });
+    } else {
+      tower.mod.undoStack.push({ action: "modify", name: modification.function, prev: existing, prevCompiled: tower.mod.compiled[modification.function] });
+    }
+
     tower.mod.functions.set(modification.function, newFn);
     Object.assign(tower.mod.compiled, compiled);
     return { level: 1, description: modification.description, attempts: attempt };
@@ -229,8 +257,13 @@ export function undoAtLevel(tower: Tower, level: number): boolean {
   if (level === 1) {
     const entry = tower.mod.undoStack.pop();
     if (!entry) return false;
-    tower.mod.functions.set(entry.name, entry.fn);
-    tower.mod.compiled[entry.name] = entry.compiled;
+    if (entry.action === "add") {
+      tower.mod.functions.delete(entry.name);
+      delete tower.mod.compiled[entry.name];
+    } else {
+      tower.mod.functions.set(entry.name, entry.prev);
+      tower.mod.compiled[entry.name] = entry.prevCompiled;
+    }
     return true;
   }
   const idx = level - 2;
