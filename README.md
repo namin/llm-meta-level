@@ -95,21 +95,26 @@ export function unique(arr: number[]): number[] {
 
 ### Dafny format
 
-Each method/function must be a top-level `method` or `function`
-with specifications:
+The file can start with a **preamble** — datatype definitions,
+constants, type synonyms, predicate/lemma declarations, imports,
+or any other Dafny code that appears before the first `method` or
+`function`. The preamble is preserved but not modifiable.
+
+After the preamble, each modifiable item must be a top-level
+`method` or `function` with specifications:
 
 ```dafny
 method Name(params) returns (r: Type)
   requires ...
   ensures ...
 {
-  // implementation
+  // implementation — this is what the LLM can replace
 }
 
 function Name(params): Type
   decreases ...
 {
-  // implementation
+  // implementation — this is what the LLM can replace
 }
 ```
 
@@ -118,27 +123,32 @@ brace-delimited bodies. The LLM replaces the body; the signature
 and specification (requires/ensures) are fixed. `dafny verify`
 must accept the result.
 
+**Note:** non-method/function declarations (datatypes, constants,
+etc.) should go in the preamble (before the first method). Content
+between methods may not be preserved correctly.
+
 Example:
 
 ```dafny
-function Sum(n: nat): nat
-  decreases n
-{
-  if n == 0 then 0 else n + Sum(n - 1)
+// Preamble: datatypes and specs (preserved, not modifiable)
+datatype Tree = Leaf | Node(left: Tree, val: int, right: Tree)
+
+function TreeSize(t: Tree): nat {
+  match t
+    case Leaf => 0
+    case Node(l, _, r) => 1 + TreeSize(l) + TreeSize(r)
 }
 
-method ComputeSum(n: nat) returns (r: nat)
-  ensures r == Sum(n)
+// Methods (modifiable — LLM can replace the body)
+method Flatten(t: Tree) returns (r: seq<int>)
+  ensures |r| == TreeSize(t)
 {
-  r := 0;
-  var i := 0;
-  while i < n
-    invariant 0 <= i <= n
-    invariant r == Sum(i)
-  {
-    i := i + 1;
-    r := r + i;
-  }
+  match t
+    case Leaf => r := [];
+    case Node(l, v, r2) =>
+      var left := Flatten(l);
+      var right := Flatten(r2);
+      r := left + [v] + right;
 }
 ```
 
