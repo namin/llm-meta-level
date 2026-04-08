@@ -2,9 +2,11 @@ import * as readline from "readline";
 import * as path from "path";
 import { loadModule, makeTower, execAtLevel, undoAtLevel, showTower, callMethod } from "./tower.js";
 
-const WORK_DIR = path.dirname(new URL(import.meta.url).pathname);
-console.log("Loading and compiling base.dfy...");
-const tower = makeTower(loadModule(path.join(WORK_DIR, "base.dfy")), WORK_DIR);
+const inputFile = process.argv[2] || path.join(path.dirname(new URL(import.meta.url).pathname), "base.dfy");
+const resolvedFile = path.resolve(inputFile);
+const WORK_DIR = path.dirname(resolvedFile);
+console.log(`Loading and compiling ${path.basename(resolvedFile)}...`);
+const tower = makeTower(loadModule(resolvedFile), WORK_DIR);
 console.log(`Loaded ${tower.mod.methods.size} methods: ${[...tower.mod.methods.keys()].join(", ")}\n`);
 
 async function handleInput(line: string): Promise<string> {

@@ -2,9 +2,11 @@ import * as readline from "readline";
 import * as path from "path";
 import { loadModule, makeTower, execAtLevel, undoAtLevel, showTower, callFunction } from "./tower.js";
 
-const WORK_DIR = path.dirname(new URL(import.meta.url).pathname);
-console.log("Loading and compiling base.ts...");
-const tower = makeTower(loadModule(path.join(WORK_DIR, "base.ts")), WORK_DIR);
+const inputFile = process.argv[2] || path.join(path.dirname(new URL(import.meta.url).pathname), "base.ts");
+const resolvedFile = path.resolve(inputFile);
+const WORK_DIR = path.dirname(resolvedFile);
+console.log(`Loading and compiling ${path.basename(resolvedFile)}...`);
+const tower = makeTower(loadModule(resolvedFile), WORK_DIR);
 console.log(`Loaded ${tower.mod.functions.size} functions: ${[...tower.mod.functions.keys()].join(", ")}\n`);
 
 async function handleInput(line: string): Promise<string> {

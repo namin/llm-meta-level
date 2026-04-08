@@ -45,6 +45,109 @@ For the Dafny tower: `brew install dafny` (needs Dafny 4.x).
 npx tsx scheme/index.ts
 ```
 
+### TypeScript tower
+
+```bash
+npx tsx typescript/index.ts                # uses base.ts
+npx tsx typescript/index.ts mymodule.ts    # uses your own file
+```
+
+### Dafny tower
+
+```bash
+npx tsx dafny/index.ts                     # uses base.dfy
+npx tsx dafny/index.ts mymodule.dfy        # uses your own file
+```
+
+## Input file format
+
+The TypeScript and Dafny towers accept a custom input file as an
+argument. The file must follow a specific format so the parser can
+identify the modifiable functions/methods.
+
+### TypeScript format
+
+Each function must be a top-level `export function` with an explicit
+return type:
+
+```typescript
+export function name(param: Type, ...): ReturnType {
+  // implementation
+}
+```
+
+The parser matches `export function name(params): ReturnType {` and
+extracts the body. The LLM replaces the body; the signature
+(name, parameters, return type) is fixed. `tsc --noEmit --strict`
+must accept the result.
+
+Example:
+
+```typescript
+export function sort(arr: number[]): number[] {
+  return [...arr].sort((a, b) => a - b);
+}
+
+export function unique(arr: number[]): number[] {
+  return [...new Set(arr)];
+}
+```
+
+### Dafny format
+
+Each method/function must be a top-level `method` or `function`
+with specifications:
+
+```dafny
+method Name(params) returns (r: Type)
+  requires ...
+  ensures ...
+{
+  // implementation
+}
+
+function Name(params): Type
+  decreases ...
+{
+  // implementation
+}
+```
+
+The parser matches `method`/`function` declarations and their
+brace-delimited bodies. The LLM replaces the body; the signature
+and specification (requires/ensures) are fixed. `dafny verify`
+must accept the result.
+
+Example:
+
+```dafny
+function Sum(n: nat): nat
+  decreases n
+{
+  if n == 0 then 0 else n + Sum(n - 1)
+}
+
+method ComputeSum(n: nat) returns (r: nat)
+  ensures r == Sum(n)
+{
+  r := 0;
+  var i := 0;
+  while i < n
+    invariant 0 <= i <= n
+    invariant r == Sum(i)
+  {
+    i := i + 1;
+    r := r + i;
+  }
+}
+```
+
+---
+
+## Session examples
+
+### Scheme tower
+
 ```
 tower> (+ 1 2)
 3
@@ -61,10 +164,6 @@ tower> (show-tower)
 
 ### TypeScript tower
 
-```bash
-npx tsx typescript/index.ts
-```
-
 ```
 tower> (call fib 10)
 55
@@ -78,10 +177,6 @@ level 1: undone.
 ```
 
 ### Dafny tower
-
-```bash
-npx tsx dafny/index.ts
-```
 
 ```
 tower> (call ComputeFib 10)
