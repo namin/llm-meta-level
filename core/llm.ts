@@ -19,17 +19,17 @@ function anthropicModelId(tier: ModelTier): string {
     case "bedrock": {
       const prefix = process.env.BEDROCK_PREFIX ?? "us";
       return tier === "powerful"
-        ? `${prefix}.anthropic.claude-opus-4-6-v1`
+        ? `${prefix}.anthropic.claude-opus-4-8`
         : `${prefix}.anthropic.claude-sonnet-4-6`;
     }
     case "vertex":
       return tier === "powerful"
-        ? "claude-opus-4-6"
+        ? "claude-opus-4-8"
         : "claude-sonnet-4-6";
     default:
       return tier === "powerful"
-        ? "claude-opus-4-6-20250715"
-        : "claude-sonnet-4-6-20250514";
+        ? "claude-opus-4-8"
+        : "claude-sonnet-4-6";
   }
 }
 
